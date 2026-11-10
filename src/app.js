@@ -44,7 +44,7 @@ let state = { screen: 'home', sel: B.TOPICS.filter(t => t.main).map(t => t.id), 
 function go(screen) { state.screen = screen; window.scrollTo(0, 0); render(); const h1 = app.querySelector('h1,h2'); if (h1) { h1.setAttribute('tabindex', '-1'); h1.focus({ preventScroll: true }); } }
 function render() {
   app.replaceChildren();
-  ({ home, quiz, results, notes, tips, writing })[state.screen]();
+  ({ home, quiz, results, notes, tips, writing, quizstart, tquiz, tresults, flash, deck })[state.screen]();
 }
 
 function home() {
@@ -75,6 +75,9 @@ function home() {
   // other tiles
   const tiles = h('div', { class: 'tiles' });
   const tile = (title, sub, fn, tag) => h('button', { class: 'tile', onclick: fn }, [tag ? h('span', { class: 'tag', text: tag }) : null, h('b', { text: title }), h('span', { text: sub })]);
+  const lastQ = saved.__quiz ? ' Last: ' + saved.__quiz.pct + '%.' : '';
+  tiles.appendChild(tile('Practice quiz', '30 questions built like your test. No hints, no timer.' + lastQ, () => go('quizstart'), 'Test-style'));
+  tiles.appendChild(tile('Flashcards', 'Put aside the cards you know. Keep working on the ones you don’t.', () => go('flash')));
   tiles.appendChild(tile('Study notes', 'Vocabulary, times, avoir, and -ER endings in one place.', () => { state.notesTab = state.notesTab || 'cours'; go('notes'); }));
   tiles.appendChild(tile('Test tips', 'What each part of the test asks, and how to win it.', () => go('tips')));
   tiles.appendChild(tile('Écriture', 'Ungraded writing practice with a strong sample answer.', () => go('writing')));
@@ -275,6 +278,226 @@ function writing() {
     app.appendChild(card);
   });
   app.appendChild(h('button', { class: 'btn ghost', text: 'Home', onclick: () => go('home') }));
+}
+
+
+/* ---------- practice quiz (test-style) ---------- */
+let Z = null;
+function quizstart() {
+  app.appendChild(h('h2', { text: 'Practice quiz' }));
+  app.appendChild(h('p', { class: 'lede', text: '30 questions in the same order as your unit test. No hints, no skipping, and no timer.' }));
+  const card = h('section', { class: 'card' });
+  card.appendChild(h('h3', { text: 'What’s on it' }));
+  card.appendChild(table(['Part', 'Questions'], B.QUIZ_SECTIONS.map((s, i) => [(i + 1) + '. ' + s.name, String(s.n)])));
+  card.appendChild(h('h3', { text: 'When do you want to see the answers?' }));
+  const mode = state.qmode || 'end';
+  const radios = h('div', { class: 'radios', role: 'radiogroup', 'aria-label': 'When to show answers' }, [
+    ['end', 'At the end, like the real test', 'You can change your answers and move back and forth. You’ll see everything when you finish.'],
+    ['each', 'After each question', 'You’ll see right and wrong right away, with the explanation. No going back.']
+  ].map(o => h('label', null, [h('input', { type: 'radio', name: 'qm', value: o[0], checked: mode === o[0], onchange: () => { state.qmode = o[0]; } }), h('span', null, [h('b', { text: o[1] }), h('br'), h('span', { class: 'muted', text: o[2] })])])));
+  card.appendChild(radios);
+  card.appendChild(h('div', { class: 'row' }, [h('button', { class: 'btn', text: 'Start the quiz', onclick: () => startQuiz(state.qmode || 'end') }), h('button', { class: 'btn ghost', text: 'Home', onclick: () => go('home') })]));
+  app.appendChild(card);
+}
+function startQuiz(mode) {
+  const qs = B.makeTestQuiz();
+  Z = { mode, qs, i: 0, ans: qs.map(() => null), confirm: false };
+  state.screen = 'tquiz'; render(); window.scrollTo(0, 0);
+}
+function feedbackBox(q, i) {
+  const c = q.choices[i], good = c.ok, fb = h('div', { class: 'fb ' + (good ? 'ok' : 'no') });
+  fb.appendChild(h('div', { class: 'quip', text: '🐶 ' + pickOne(good ? QUIP_OK : QUIP_NO) }));
+  if (good) fb.appendChild(h('div', { text: c.why }));
+  else { fb.appendChild(h('div', null, [h('b', { text: 'Why that’s not it: ' }), c.why])); fb.appendChild(h('div', { style: 'margin-top:6px' }, [h('b', { text: 'The answer: ' }), q.choices.find(x => x.ok).why])); }
+  return fb;
+}
+function tquiz() {
+  const q = Z.qs[Z.i], sec = B.QUIZ_SECTIONS[q.section], total = Z.qs.length, each = Z.mode === 'each';
+  const posIn = Z.qs.slice(0, Z.i).filter(x => x.section === q.section).length + 1;
+  const answered = Z.ans[Z.i] !== null;
+  app.appendChild(h('div', { class: 'qhead' }, [h('span', { text: 'Partie ' + (q.section + 1) + ' : ' + sec.name + ' (' + posIn + ' of ' + sec.n + ')' }), h('span', { text: (Z.i + 1) + ' / ' + total })]));
+  app.appendChild(h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': total, 'aria-valuenow': Z.i }, [h('i', { style: 'width:' + (Z.i / total * 100) + '%' })]));
+  const card = h('section', { class: 'card qcard' });
+  if (Z.confirm) {
+    const blanks = Z.ans.map((a, i) => a === null ? i + 1 : null).filter(Boolean);
+    card.appendChild(h('div', { class: 'warn', role: 'alert' }, ['You left ' + blanks.length + ' question' + (blanks.length > 1 ? 's' : '') + ' blank: ' + blanks.join(', ') + '. ',
+      h('button', { class: 'btn small', text: 'Go back and answer', onclick: () => { Z.confirm = false; Z.i = blanks[0] - 1; render(); } }), ' ',
+      h('button', { class: 'btn ghost small', text: 'Finish anyway', onclick: finishQuiz })]));
+  }
+  const pr = h('p', { class: 'prompt', id: 'prompt', tabindex: '-1' }); pr.appendChild(withBlank(q.prompt)); card.appendChild(pr);
+  if (q.speak && canSpeak) card.appendChild(h('div', { class: 'listenbox' }, [h('button', { class: 'btn ghost small', 'aria-label': 'Hear the French', text: '🔊 Hear it', onclick: () => say(q.speak, false) })]));
+  const box = h('div', { class: 'choices', role: 'group', 'aria-label': 'Answer choices' });
+  const fbSlot = h('div', { 'aria-live': 'polite' });
+  const btns = q.choices.map((c, i) => h('button', { class: 'choice', 'data-i': i, 'aria-pressed': 'false', onclick: () => choose(i) }, [h('span', { class: 'k', text: 'ABCD'[i] }), h('span', { text: c.t })]));
+  btns.forEach(b => box.appendChild(b)); card.appendChild(box); card.appendChild(fbSlot);
+  const nextBtn = h('button', { class: 'btn', text: Z.i === total - 1 ? (each ? 'See my results' : 'Finish quiz') : 'Next question', onclick: next });
+  const prevBtn = h('button', { class: 'btn ghost', text: 'Previous', onclick: () => { Z.confirm = false; Z.i--; render(); window.scrollTo(0, 0); } });
+  prevBtn.disabled = Z.i === 0;
+  const acts = [];
+  if (!each) acts.push(prevBtn);
+  acts.push(h('button', { class: 'btn ghost small', text: 'Quit', onclick: () => go('home') }));
+  if (each) nextBtn.hidden = !answered;
+  acts.push(h('span', { class: 'grow' }), nextBtn);
+  card.appendChild(h('div', { class: 'actions' }, acts));
+  if (!each) {
+    card.appendChild(h('div', { class: 'tracker', role: 'group', 'aria-label': 'Jump to a question' }, Z.qs.map((_, i) =>
+      h('button', { class: Z.ans[i] !== null ? 'done' : '', 'aria-label': 'Question ' + (i + 1) + (Z.ans[i] !== null ? ' answered' : ' blank'), 'aria-current': String(i === Z.i), text: String(i + 1), onclick: () => { Z.confirm = false; Z.i = i; render(); window.scrollTo(0, 0); } }))));
+  }
+  app.appendChild(card);
+  if (answered) paint();
+  pr.focus({ preventScroll: true });
+
+  function paint() { // show the current answer
+    const i = Z.ans[Z.i];
+    if (each) {
+      btns.forEach((b, j) => { b.disabled = true; if (q.choices[j].ok) { b.classList.add('ok'); b.appendChild(h('span', { class: 'mark', text: '✓ Correct' })); } else if (j === i) { b.classList.add('no'); b.appendChild(h('span', { class: 'mark', text: '✗ Not quite' })); } });
+      fbSlot.replaceChildren(feedbackBox(q, i));
+    } else { btns.forEach((b, j) => { b.classList.toggle('sel', j === i); b.setAttribute('aria-pressed', String(j === i)); }); }
+  }
+  function choose(i) {
+    if (each && Z.ans[Z.i] !== null) return;
+    Z.ans[Z.i] = i; paint();
+    if (each) { nextBtn.hidden = false; nextBtn.focus(); }
+    else { const t = card.querySelectorAll('.tracker button')[Z.i]; if (t) t.classList.add('done'); }
+  }
+  function next() {
+    if (Z.i < total - 1) { Z.confirm = false; Z.i++; render(); window.scrollTo(0, 0); return; }
+    if (Z.ans.some(a => a === null)) { Z.confirm = true; render(); window.scrollTo(0, 0); } else finishQuiz();
+  }
+}
+document.addEventListener('keydown', e => {
+  if (state.screen !== 'tquiz' || !Z || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target && /^(TEXTAREA|SELECT|INPUT)$/.test(e.target.tagName)) return;
+  const k = e.key.toLowerCase(), idx = k.length === 1 ? ('1234'.indexOf(k) >= 0 ? +k - 1 : 'abcd'.indexOf(k)) : -1;
+  if (idx >= 0) { const b = app.querySelector('.choice[data-i="' + idx + '"]'); if (b && !b.disabled) b.click(); }
+});
+function finishQuiz() {
+  Z.confirm = false; state.screen = 'tresults'; render(); window.scrollTo(0, 0);
+  const right = Z.qs.filter((q, i) => Z.ans[i] !== null && q.choices[Z.ans[i]].ok).length;
+  const saved = store.get(); saved.__quiz = { pct: Math.round(100 * right / Z.qs.length), right, total: Z.qs.length, date: Date.now() }; store.set(saved);
+}
+function tresults() {
+  const total = Z.qs.length, ok = i => Z.ans[i] !== null && Z.qs[i].choices[Z.ans[i]].ok;
+  const right = Z.qs.filter((q, i) => ok(i)).length, blank = Z.ans.filter(a => a === null).length, pct = Math.round(100 * right / total);
+  const msg = pct >= 90 ? 'Magnifique! Murphy is doing zoomies.' : pct >= 70 ? 'Très bien! A little polish and you’re set.' : pct >= 50 ? 'Bon début. The review list below is your plan.' : 'Courage! Use the study notes and flashcards, then try again.';
+  app.appendChild(h('h2', { text: 'Practice quiz results' }));
+  app.appendChild(h('p', { class: 'score', text: right + ' / ' + total }));
+  app.appendChild(h('div', { class: 'bubble' }, [h('span', { class: 'dog', 'aria-hidden': 'true', text: '🐶' }), h('div', { class: 'say', text: msg + ' (' + pct + '%)' })]));
+  const card = h('section', { class: 'card' }); card.appendChild(h('h3', { text: 'By part' }));
+  const rows = B.QUIZ_SECTIONS.map((s, si) => { const idx = Z.qs.map((q, i) => q.section === si ? i : -1).filter(i => i >= 0), r = idx.filter(ok).length, p = Math.round(100 * r / idx.length), weak = p < 70;
+    return h('tr', null, [h('td', { text: (si + 1) + '. ' + s.name }), h('td', { text: r + ' / ' + idx.length }), h('td', null, [h('span', { class: 'pct', text: p + '%' }), ' ', weak ? 'Review this' : 'Looking good']), h('td', null, [h('div', { class: 'mini' + (weak ? ' weak' : '') }, [h('i', { style: 'width:' + p + '%' })])])]); });
+  card.appendChild(h('div', { class: 'tblwrap' }, [h('table', null, [h('tr', null, ['Part', 'Score', 'Status', ''].map(x => h('th', { text: x }))), ...rows])]));
+  if (blank) card.appendChild(h('p', { class: 'muted', text: blank + ' question' + (blank > 1 ? 's were' : ' was') + ' left blank.' }));
+  card.appendChild(h('div', { class: 'row' }, [h('button', { class: 'btn', text: 'Take another quiz', onclick: () => startQuiz(Z.mode) }), h('button', { class: 'btn ghost', text: 'Flashcards', onclick: () => go('flash') }), h('button', { class: 'btn ghost', text: 'Study notes', onclick: () => { state.notesTab = state.notesTab || 'cours'; go('notes'); } }), h('button', { class: 'btn ghost', text: 'Home', onclick: () => go('home') })]));
+  app.appendChild(card);
+  const missed = Z.qs.map((q, i) => ({ q, i })).filter(x => !ok(x.i));
+  if (missed.length) {
+    const m = h('section', { class: 'card' }); m.appendChild(h('h3', { text: 'Questions to review' }));
+    missed.forEach(({ q, i }) => { const d = h('details', { class: 'sec' }); const sm = h('summary'); sm.appendChild(document.createTextNode((i + 1) + '. ')); sm.appendChild(withBlank(q.prompt)); d.appendChild(sm);
+      if (Z.ans[i] === null) d.appendChild(h('p', { class: 'muted', text: 'You left this one blank.' }));
+      else d.appendChild(h('p', null, [h('b', { text: 'You chose: ' }), q.choices[Z.ans[i]].t, ' ', h('span', { class: 'muted', text: q.choices[Z.ans[i]].why })]));
+      d.appendChild(h('p', null, [h('b', { text: 'The answer: ' }), q.choices.find(c => c.ok).t, ' ', h('span', { class: 'muted', text: q.choices.find(c => c.ok).why })])); m.appendChild(d); });
+    app.appendChild(m);
+  }
+}
+
+/* ---------- flashcards ---------- */
+let FK = null, DECKS = null, D = null;
+const knownSet = () => { if (!FK) FK = new Set(store.get().flashKnown || []); return FK; };
+function saveKnown() { const s = store.get(); s.flashKnown = Array.from(FK); store.set(s); }
+const decks = () => DECKS || (DECKS = B.makeDecks());
+const fdir = () => state.fdir || store.get().flashDir || 'fr';
+function setDir(d) { state.fdir = d; const s = store.get(); s.flashDir = d; store.set(s); render(); }
+function dirToggle() {
+  return h('div', { class: 'seg', role: 'group', 'aria-label': 'Which side shows first' }, [
+    h('button', { 'aria-pressed': String(fdir() === 'fr'), text: 'French first', onclick: () => setDir('fr') }),
+    h('button', { 'aria-pressed': String(fdir() === 'en'), text: 'English first', onclick: () => setDir('en') })]);
+}
+function flash() {
+  const K = knownSet();
+  app.appendChild(h('h2', { text: 'Flashcards' }));
+  app.appendChild(h('p', { class: 'lede', text: 'Flip each card. Put aside the ones you know, and keep the rest in the pile until the pile is empty.' }));
+  app.appendChild(h('div', { class: 'row', style: 'margin-bottom:14px' }, [h('span', { class: 'muted', text: 'Show first:' }), dirToggle()]));
+  const card = h('section', { class: 'card' });
+  decks().forEach(dk => {
+    const known = dk.cards.filter(c => K.has(c.id)).length, left = dk.cards.length - known;
+    const acts = [];
+    if (left) acts.push(h('button', { class: 'btn small', text: known ? 'Keep studying (' + left + ' left)' : 'Start (' + left + ' cards)', onclick: () => startDeck(dk.id, 'learn') }));
+    else acts.push(h('span', { class: 'tag', text: 'You know them all!' }));
+    if (known) acts.push(h('button', { class: 'btn ghost small', text: 'Review the ' + known + ' I put aside', onclick: () => startDeck(dk.id, 'review') }));
+    if (known) acts.push(h('button', { class: 'btn ghost small', text: 'Start over', onclick: () => { dk.cards.forEach(c => K.delete(c.id)); saveKnown(); render(); } }));
+    card.appendChild(h('div', { class: 'deck' }, [h('div', null, [h('b', { text: dk.name }), h('span', { class: 'muted', text: '  ' + dk.cards.length + ' cards, ' + known + ' put aside' })]),
+      h('div', { class: 'mini' }, [h('i', { style: 'width:' + Math.round(100 * known / dk.cards.length) + '%' })]), h('div', { class: 'row' }, acts)]));
+  });
+  app.appendChild(card);
+  app.appendChild(h('p', { class: 'muted', text: 'Your put-aside cards are saved on this device. If a card shows up in more than one deck, putting it aside in one deck puts it aside in all of them.' }));
+  app.appendChild(h('button', { class: 'btn ghost', text: 'Home', onclick: () => go('home') }));
+}
+function startDeck(id, mode) {
+  const dk = decks().find(x => x.id === id), K = knownSet();
+  const cards = shuffle2(dk.cards.filter(c => mode === 'review' ? K.has(c.id) : !K.has(c.id)));
+  if (!cards.length) return;
+  D = { dk, mode, queue: cards, pos: 0, next: [], flipped: false, pass: 1, aside: 0, back: 0, done: false, total: cards.length };
+  state.screen = 'deck'; render(); window.scrollTo(0, 0);
+}
+function shuffle2(a) { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
+function deck() {
+  const K = knownSet(), review = D.mode === 'review';
+  app.appendChild(h('div', { class: 'qhead' }, [h('span', { text: D.dk.name + (review ? ' (review)' : '') }), h('button', { class: 'btn ghost small', text: 'Back to decks', onclick: () => go('flash') })]));
+  if (D.done) return deckSummary();
+  const c = D.queue[D.pos], front = fdir() === 'fr' ? 'fr' : 'en';
+  const frText = c.fr;
+  const matches = D.dk.cards.filter(x => x.en === c.en);
+  const backText = front === 'fr' ? c.en : matches.map(x => x.fr).join('  /  ');
+  const extra = c.extra && (front === 'fr' || matches.length === 1) ? c.extra : '';
+  const leftInDeck = D.dk.cards.filter(x => !K.has(x.id)).length;
+  app.appendChild(h('div', { class: 'pile' }, [
+    h('span', { text: (review ? 'Reviewing: ' : 'Pass ' + D.pass + ': ') + 'card ' + (D.pos + 1) + ' of ' + D.queue.length }),
+    review ? null : h('span', { text: 'Still in the pile: ' + leftInDeck }),
+    h('span', { text: 'Put aside: ' + (D.dk.cards.length - leftInDeck) })]));
+  const face = D.flipped ? backText : (front === 'fr' ? frText : c.en);
+  const sideLabel = D.flipped ? (front === 'fr' ? 'English' : 'French') : (front === 'fr' ? 'French' : 'English');
+  const fc = h('button', { class: 'fcard' + (D.flipped ? ' back' : ''), 'aria-label': sideLabel + ': ' + face + '. Tap to flip.', onclick: () => { D.flipped = !D.flipped; render(); const b = app.querySelector('.fcard'); if (b) b.focus({ preventScroll: true }); } },
+    [h('span', { class: 'side', text: sideLabel }), h('span', { text: face }), extra && D.flipped ? h('small', { text: extra }) : null, !D.flipped ? h('small', { text: 'Tap to flip' }) : null]);
+  app.appendChild(fc);
+  const speakText = (front === 'fr' && !D.flipped) || (front === 'en' && D.flipped) ? frText : null;
+  if (canSpeak) app.appendChild(h('div', { class: 'listenbox', style: 'margin-top:10px' }, [h('button', { class: 'btn ghost small', text: '🔊 Hear the French', onclick: () => say(frText.replace(/\([^)]*\)/g, ''), false) }), h('span', { class: 'muted', text: '' }), dirToggle()]));
+  else app.appendChild(h('div', { class: 'listenbox', style: 'margin-top:10px' }, [dirToggle()]));
+  app.appendChild(h('div', { class: 'actions' }, [
+    h('button', { class: 'btn learn big', text: review ? 'Needs more practice' : 'Still learning', onclick: () => answer(false) }),
+    h('button', { class: 'btn know big', text: review ? 'Still know it' : 'I know it', onclick: () => answer(true) })]));
+  app.appendChild(h('p', { class: 'muted', text: 'Tip: use the left and right arrow keys to sort cards.' }));
+  fc.focus({ preventScroll: true });
+}
+function answer(knowIt) {
+  if (!D || D.done) return;
+  const c = D.queue[D.pos], K = knownSet();
+  if (D.mode === 'learn') { if (knowIt) { K.add(c.id); D.aside++; saveKnown(); } else D.next.push(c); }
+  else if (!knowIt) { K.delete(c.id); D.back++; saveKnown(); }
+  D.pos++; D.flipped = false;
+  if (D.pos >= D.queue.length) D.done = true;
+  render();
+}
+document.addEventListener('keydown', e => {
+  if (state.screen !== 'deck' || !D || D.done || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); answer(false); } else if (e.key === 'ArrowRight') { e.preventDefault(); answer(true); }
+});
+function deckSummary() {
+  const review = D.mode === 'review', card = h('section', { class: 'card' });
+  if (review) {
+    card.appendChild(h('h3', { text: 'Review done' }));
+    card.appendChild(h('p', { text: D.back ? D.back + ' card' + (D.back > 1 ? 's' : '') + ' went back into the pile. ' + (D.queue.length - D.back) + ' still put aside.' : 'You still know all ' + D.queue.length + '. Magnifique!' }));
+    card.appendChild(h('div', { class: 'row' }, [D.back ? h('button', { class: 'btn', text: 'Study the pile', onclick: () => startDeck(D.dk.id, 'learn') }) : null, h('button', { class: 'btn ghost', text: 'Back to decks', onclick: () => go('flash') })]));
+  } else if (!D.next.length) {
+    card.appendChild(h('h3', { text: 'You know them all!' }));
+    card.appendChild(h('div', { class: 'bubble' }, [h('span', { class: 'dog', 'aria-hidden': 'true', text: '🐶' }), h('div', { class: 'say', text: 'Pile empty! Zoomies! Come back for a quick review tomorrow.' })]));
+    card.appendChild(h('div', { class: 'row' }, [h('button', { class: 'btn', text: 'Review the ones I put aside', onclick: () => startDeck(D.dk.id, 'review') }), h('button', { class: 'btn ghost', text: 'Take the practice quiz', onclick: () => go('quizstart') }), h('button', { class: 'btn ghost', text: 'Back to decks', onclick: () => go('flash') })]));
+  } else {
+    card.appendChild(h('h3', { text: 'Pass ' + D.pass + ' done' }));
+    card.appendChild(h('p', { text: 'You put aside ' + D.aside + ' card' + (D.aside === 1 ? '' : 's') + ' this pass. ' + D.next.length + ' still in the pile.' }));
+    card.appendChild(h('div', { class: 'row' }, [h('button', { class: 'btn', text: 'Go again with the ' + D.next.length + ' left', onclick: () => { D.queue = shuffle2(D.next); D.next = []; D.pos = 0; D.pass++; D.aside = 0; D.done = false; D.flipped = false; render(); window.scrollTo(0, 0); } }), h('button', { class: 'btn ghost', text: 'Back to decks', onclick: () => go('flash') })]));
+  }
+  app.appendChild(card);
 }
 
 /* ---------- boot ---------- */

@@ -91,6 +91,32 @@ for (let i = 0; i < 2000; i++) for (const t in B.TEMPLATES) if (B.TEMPLATES[t].l
 const blob = all.join('\n').toLowerCase();
 SOURCE.forEach(s => ok(!blob.includes(s.toLowerCase()), 'a question prompt repeats source text: ' + s));
 
+
+/* 6. practice quiz mirrors the test: sections, counts, no repeats, one 24-hour question */
+for (let r = 0; r < 400; r++) {
+  const qz = B.makeTestQuiz();
+  ok(qz.length === 30, 'quiz length ' + qz.length);
+  B.QUIZ_SECTIONS.forEach((s, si) => { const sq = qz.filter(q => q.section === si); ok(sq.length === s.n, 'section ' + s.topic + ' has ' + sq.length); sq.forEach(q => ok(q.topic === s.topic, 'wrong topic in section ' + s.topic)); });
+  ok(new Set(qz.map(B.roundKey)).size === 30, 'duplicate question in quiz');
+  qz.forEach(q => ok(B.validate(q).length === 0, 'invalid quiz question ' + q.id));
+  ok(qz.some(q => /^time-24/.test(q.skill)), 'no 24-hour question in quiz');
+  ok(qz.map(q => q.section).join('') === qz.map(q => q.section).slice().sort().join(''), 'sections out of order');
+}
+/* 7. flashcard decks */
+const decks = B.makeDecks();
+ok(decks.length === 8, 'deck count ' + decks.length);
+decks.forEach(d => {
+  ok(d.cards.length > 0, d.id + ' empty');
+  ok(new Set(d.cards.map(c => c.id)).size === d.cards.length, d.id + ' has duplicate card ids');
+  d.cards.forEach(c => ok(c.id && c.fr && c.en, d.id + ' bad card ' + JSON.stringify(c)));
+});
+const allDeck = decks.find(d => d.id === 'all');
+ok(allDeck.cards.length === B.V.length, 'whole-unit deck should hold every vocab entry');
+const partIds = new Set(); decks.filter(d => ['cours', 'verbe', 'avoir', 'heure', 'temps', 'opinion'].includes(d.id)).forEach(d => d.cards.forEach(c => partIds.add(c.id)));
+ok(partIds.size === allDeck.cards.length, 'category decks should cover the whole unit exactly once (' + partIds.size + ' vs ' + allDeck.cards.length + ')');
+const erDeck = decks.find(d => d.id === 'er'); ok(erDeck.cards.length === B.ER.length, 'er deck size');
+[['commencer', 'nous commençons'], ['manger', 'nous mangeons'], ['partager', 'nous partageons'], ['voyager', 'nous voyageons'], ['parler', 'nous parlons']].forEach(([v, f]) => ok(erDeck.cards.find(c => c.fr === v).extra === f, 'er card extra for ' + v));
+
 console.log('Fixed questions:', Object.values(B.FIXED).reduce((a, b) => a + b.length, 0), '| generated samples checked:', tplCount + 6000 + 3000 + 2000);
 console.log(checks + ' checks, ' + fails + ' failures');
 process.exit(fails ? 1 : 0);

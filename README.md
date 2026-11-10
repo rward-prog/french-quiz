@@ -13,6 +13,6 @@ Edit `src/bank.js` (questions) or `src/app.js` (page), then run `python3 build.p
 ## Checks
 - `node tests/test_bank.js` checks every question and the answer keys.
 - `python3 tests/privacy_scan.py` scans all files for emails, phones, addresses, links and images.
-- `python3 tests/e2e.py` clicks through the site in a headless browser (needs Playwright).
+- `python3 tests/e2e.py` and `python3 tests/e2e_extras.py` click through the whole site (practice, practice quiz, flashcards) in a headless browser (needs Playwright).
 
 Student answers and last scores stay on the student's own device. Nothing is sent anywhere.

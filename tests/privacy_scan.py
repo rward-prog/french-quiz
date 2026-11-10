@@ -18,7 +18,7 @@ for f in sorted(root.rglob('*')):
     txt = f.read_text(encoding='utf-8', errors='replace').replace('http://www.w3.org/2000/svg', '')  # SVG namespace in the emoji favicon
     for label, rx in checks.items():
         for m in rx.finditer(txt):
-            if label == 'image file reference' and f.name in ('e2e.py', 'privacy_scan.py'): continue  # test code names its own screenshots
+            if label == 'image file reference' and f.name.startswith('e2e') or f.name == 'privacy_scan.py': continue  # test code names its own screenshots
             bad += 1; print(f'FOUND {label} in {f.relative_to(root)}: {m.group(0)[:60]!r}')
 print(f'Scanned {n} files, {bad} problem(s).')
 sys.exit(1 if bad else 0)

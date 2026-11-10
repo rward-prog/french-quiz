@@ -521,11 +521,11 @@ const TPL_SHARE = { cours: 0, vocab: 0, avoir: 0.4, heure: 0.7, er: 0.6, choix: 
 function play(q) { return Object.assign({}, q, { choices: shuffle(q.choices.map(x => Object.assign({}, x))) }); }
 function genTemplateQ(topic) { return pick(TEMPLATES[topic])(); }
 
-function makeRound(topicIds, n) {
+function makeRound(topicIds, n, used) {
   const ids = topicIds.slice(), quota = ids.map(() => Math.floor(n / ids.length));
   const extra = n - quota.reduce((a, b) => a + b, 0);
   for (let i = 0; i < extra; i++) quota[i % ids.length]++;
-  const prompts = new Set(), picked = [];
+  const prompts = used || new Set(), picked = [];
   const take = q => { const key = q.prompt + '|' + (q.listen ? q.listen.speak : ''); if (prompts.has(key)) return false; prompts.add(key); picked.push(play(q)); return true; };
   ids.forEach((t, k) => {
     const fx = shuffle(FIXED[t]); let fi = 0, got = 0, guard = 0;
@@ -537,6 +537,47 @@ function makeRound(topicIds, n) {
     }
   });
   return shuffle(picked);
+}
+
+
+/* ---------- Practice quiz (mirrors the unit test order) ---------- */
+const QUIZ_SECTIONS = [
+  { topic: 'avoir', name: 'Expressions avec avoir', n: 5 },
+  { topic: 'heure', name: 'L’heure', n: 5 },
+  { topic: 'er', name: 'Les verbes en -ER', n: 7 },
+  { topic: 'choix', name: 'Quel verbe?', n: 5 },
+  { topic: 'vocab', name: 'Vocabulaire', n: 8 }
+];
+function makeTestQuiz() {
+  const out = [], used = new Set();
+  QUIZ_SECTIONS.forEach((sec, si) => {
+    const qs = makeRound([sec.topic], sec.n, used);
+    if (sec.topic === 'heure' && !qs.some(q => /^time-24/.test(q.skill))) { // always include one 24-hour question
+      for (let g = 0; g < 50; g++) {
+        const q = play(rnd(2) ? timeF2D({ digits24: true }) : timeD2F({ digits24: true }));
+        if (!used.has(roundKey(q))) { used.delete(roundKey(qs[qs.length - 1])); used.add(roundKey(q)); qs[qs.length - 1] = q; break; }
+      }
+    }
+    qs.forEach(q => { q.section = si; out.push(q); });
+  });
+  return out;
+}
+
+/* ---------- Flashcard decks ---------- */
+function makeDecks() {
+  const card = p => ({ id: p.id, fr: clean(p.fr), en: p.en });
+  const by = cats => V.filter(p => cats.includes(p.cat)).map(card);
+  const er = ER.map(v => ({ id: 'er-' + slug(v[0]), fr: v[0], en: v[1], extra: 'nous ' + conj(v[0], 3) }));
+  return [
+    { id: 'all', name: 'Whole unit', cards: V.map(card) },
+    { id: 'cours', name: 'Les cours', cards: by(['cours', 'adj']) },
+    { id: 'verbe', name: 'Verbes', cards: by(['verbe']) },
+    { id: 'er', name: 'Verbes en -ER (with the nous form)', cards: er },
+    { id: 'avoir', name: 'Expressions avec avoir', cards: by(['avoir']) },
+    { id: 'heure', name: 'L’heure', cards: by(['heure']) },
+    { id: 'temps', name: 'Expressions de temps', cards: by(['temps']) },
+    { id: 'opinion', name: 'Questions et opinions', cards: by(['opinion']) }
+  ];
 }
 
 function validate(q) {
@@ -553,6 +594,6 @@ function validate(q) {
 
 function roundKey(q) { return q.prompt + '|' + (q.listen ? q.listen.speak : ''); }
 function maxRound(topicIds) { return topicIds.reduce((a, t) => a + (TEMPLATES[t].length ? 1e9 : FIXED[t].length), 0); }
-const api = { roundKey, maxRound, TOPICS, FIXED, TEMPLATES, V, OPP, GLOSS, EXPR, AV, ER, ENDS, conj, makeRound, play, genTemplateQ, validate, dig12, dig24, fr12, coreFr, hourStr, oppOf, CAT_NAME };
+const api = { QUIZ_SECTIONS, makeTestQuiz, makeDecks, roundKey, maxRound, TOPICS, FIXED, TEMPLATES, V, OPP, GLOSS, EXPR, AV, ER, ENDS, conj, makeRound, play, genTemplateQ, validate, dig12, dig24, fr12, coreFr, hourStr, oppOf, CAT_NAME };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BANK = api;
 })(typeof window !== 'undefined' ? window : this);
